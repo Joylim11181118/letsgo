@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 우주선: 확률과 통계 연산</title>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <!-- 그래프 구현을 위한 Chart.js 라이브러리 연동 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --accent-color: #ff003c;
+            --safe-color: #00ffcc;
+            --panel-light: #3a3f4d;
+            --panel-dark: #121418;
+            --metal-base: #1e222b;
+            --term-green: #39ff14;
+            --math-blue: #00f0ff;
+            --hazard-yellow: #ffb700;
+        }
+
+        body {
+            margin: 0; overflow: hidden; background-color: #000;
+            font-family: 'Share Tech Mono', monospace; user-select: none;
+            word-break: keep-all;
+        }
+
+        /* ---------------- 스토리 인트로 ---------------- */
+        #intro-screen {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #020202; z-index: 2000; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: var(--term-green);
+        }
+        #intro-text { width: 80%; max-width: 800px; font-size: 1.2rem; line-height: 2; text-shadow: 0 0 10px var(--term-green); min-height: 450px; letter-spacing: 1px; font-family: sans-serif; }
+        .cursor { display: inline-block; width: 12px; height: 1.2em; background-color: var(--term-green); vertical-align: middle; animation: blink-cursor 1s step-end infinite; }
+        @keyframes blink-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        
+        #start-game-btn { margin-top: 30px; padding: 15px 40px; font-size: 1.3rem; background: transparent; color: var(--math-blue); border: 2px solid var(--math-blue); cursor: pointer; opacity: 0; transition: 0.3s; pointer-events: none; text-shadow: 0 0 10px var(--math-blue); font-family: 'Share Tech Mono', monospace; }
+        #start-game-btn.active { pointer-events: auto; }
+        #start-game-btn.active:hover { background: rgba(0, 240, 255, 0.2); box-shadow: 0 0 40px var(--math-blue); }
+
+        /* ---------------- 3D 엔진 코어 ---------------- */
+        #viewport { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; perspective: 700px; overflow: hidden; background: #000; }
+        #camera { position: absolute; top: 50%; left: 50%; width: 0; height: 0; transform-style: preserve-3d; transition: transform 0.1s ease-out; }
+        #room { position: absolute; top: 0; left: 0; width: 0; height: 0; transform-style: preserve-3d; transition: transform 0.05s linear; animation: room-shake 3s infinite; }
+
+        @keyframes room-shake {
+            0%, 100% { transform: translate3d(var(--rx, 0px), 0px, var(--rz, 400px)); }
+            15% { transform: translate3d(calc(var(--rx, 0px) + 8px), 5px, calc(var(--rz, 400px) + 2px)); }
+            30% { transform: translate3d(calc(var(--rx, 0px) - 9px), -6px, calc(var(--rz, 400px) - 4px)); }
+            45% { transform: translate3d(calc(var(--rx, 0px) + 4px), -2px, calc(var(--rz, 400px) + 5px)); }
+            70% { transform: translate3d(calc(var(--rx, 0px) - 5px), 5px, calc(var(--rz, 400px) - 2px)); }
+        }
+
+        .heavy-earthquake { animation: monster-thump 0.15s infinite alternate !important; }
+        @keyframes monster-thump {
+            0% { transform: translate3d(calc(var(--rx, 0px) - 25px), -15px, calc(var(--rz, 400px) - 10px)) rotateZ(-0.7deg); }
+            100% { transform: translate3d(calc(var(--rx, 0px) + 25px), 15px, calc(var(--rz, 400px) + 10px)) rotateZ(0.7deg); }
+        }
+
+        .wall { 
+            position: absolute; width: 2400px; height: 1000px; left: -1200px; top: -500px; 
+            background-color: var(--metal-base); 
+            background-image: 
+                linear-gradient(90deg, rgba(0,0,0,0.8) 0%, transparent 15%, transparent 85%, rgba(0,0,0,0.8) 100%),
+                repeating-linear-gradient(90deg, rgba(255,255,255,0.01) 0px, rgba(255,255,255,0.01) 4px, transparent 4px, transparent 40px),
+                linear-gradient(rgba(255,255,255,0.02) 2px, transparent 2px); 
+            background-size: 100% 100%, 40px 100px, 120px 120px; 
+            border: 20px solid #0f1115; box-shadow: inset 0 0 600px rgba(0,0,0,0.95); transform-style: preserve-3d; 
+        }
+        .front  { transform: translateZ(-1200px); background-color: #0e1015; }
+        .back   { transform: translateZ(1200px) rotateY(180deg); background-color: #0a0c10; }
+        .left   { transform: translateX(-1200px) rotateY(90deg); }
+        .right  { transform: translateX(1200px) rotateY(-90deg); }
+        .top { transform: translateY(-500px) rotateX(90deg); width: 2400px; height: 2400px; left: -1200px; top: -1200px; background: #0b0c10; }
+        .bottom { transform: translateY(500px) rotateX(-90deg); width: 2400px; height: 2400px; left: -1200px; top: -1200px; background: #050608; box-shadow: inset 0 0 800px #000; transform-style: preserve-3d; }
+
+        .warning-icon {
+            position: absolute; top: 3%; left: 45%; width: 10%; height: 50px;
+            background: rgba(255, 0, 60, 0.2); border: 2px solid var(--accent-color);
+            border-radius: 4px; color: var(--accent-color); font-weight: bold;
+            display: flex; justify-content: center; align-items: center; font-size: 1.4rem;
+            letter-spacing: 3px; box-shadow: 0 0 15px rgba(255, 0, 60, 0.6);
+            animation: warning-pulse 0.6s infinite alternate;
+        }
+        @keyframes warning-pulse {
+            0% { opacity: 0.3; box-shadow: 0 0 5px rgba(255, 0, 60, 0.2); }
+            100% { opacity: 1; box-shadow: 0 0 25px rgba(255, 0, 60, 1); text-shadow: 0 0 10px red; }
+        }
+
+        /* ---------------- 창문 너머 입체 공간 구현 ---------------- */
+        #space-window-container { position: absolute; top: 12%; left: 15%; width: 70%; height: 75%; background: #000; border: 35px solid #1a1d24; overflow: hidden; z-index: 2; }
+        #space-view { width: 100%; height: 100%; position: relative; overflow: hidden; transform-style: preserve-3d; perspective: 500px; }
+        #window-shield { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(180deg, #282c35 0%, #15181e 100%); z-index: 20; transition: transform 1.8s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; justify-content: center; align-items: center; color: var(--accent-color); font-size: 2.2rem; text-shadow: 0 0 10px red; font-weight: bold; }
+        #window-shield.opened { transform: translateY(-100%); }
+
+        #bg-stars { position: absolute; width: 150%; height: 150%; top:-25%; left:-25%; background-image: radial-gradient(#fff 1.5px, transparent 1.5px); background-size: 140px 140px; opacity: 0.5; transform: translateZ(-300px) scale(1.6); }
+        #planet { position: absolute; top: 10%; left: 50%; width: 450px; height: 450px; background: radial-gradient(circle at 30% 30%, #1a00aa 0%, #030022 60%, #000 80%); border-radius: 50%; transform: translateZ(-150px) scale(1.3); box-shadow: 0 0 40px rgba(26,0,170,0.3); }
+        
+        #monster { 
+            position: absolute; bottom: -120px; right: 0%; width: 700px; height: 800px; z-index: 10; 
+            display: none; transform-style: preserve-3d;
+            animation: monster-float 4s infinite ease-in-out alternate;
+        }
+        @keyframes monster-float {
+            0% { transform: translate3d(0, 30px, -50px) rotateY(-5deg); }
+            100% { transform: translate3d(20px, -20px, 30px) rotateY(15deg); }
+        }
+        
+        .monster-body { position: absolute; width: 100%; height: 100%; background: #030105; clip-path: polygon(50% 5%, 68% 22%, 95% 12%, 85% 45%, 100% 65%, 78% 75%, 85% 95%, 65% 90%, 50% 100%, 35% 90%, 15% 95%, 22% 75%, 0% 65%, 15% 45%, 5% 12%, 32% 22%); transform: translateZ(-40px); border: 2px solid #1a0022; }
+        .monster-eye { position: absolute; background: radial-gradient(circle, #ff0000 20%, #7a0010 70%, #000 100%); border-radius: 50%; box-shadow: 0 0 50px #ff003c; transform: translateZ(10px); animation: eye-twitch 0.3s infinite alternate; }
+        @keyframes eye-twitch { 0% { transform: translateZ(10px) scaleY(0.8); } 100% { transform: translateZ(15px) scaleY(1.2); } }
+        .eye-1 { top: 32%; left: 42%; width: 90px; height: 50px; }
+        .eye-2 { top: 28%; left: 60%; width: 65px; height: 40px; }
+        .monster-jaw { position: absolute; top: 48%; left: 20%; width: 38px; height: 240px; width: 350px; background: #09020f; clip-path: polygon(0% 15%, 15% 45%, 25% 10%, 40% 55%, 55% 5%, 70% 50%, 80% 15%, 90% 45%, 100% 15%, 95% 85%, 75% 60%, 65% 95%, 50% 55%, 35% 90%, 20% 60%, 5% 85%); transform: translateZ(50px); animation: jaw-snap 0.2s infinite alternate; filter: drop-shadow(0 0 15px #ff003c); }
+        @keyframes jaw-snap { 0% { transform: translateZ(50px) scale(0.9) rotate(2deg); } 100% { transform: translateZ(70px) scale(1.1) translateY(10px) rotate(-2deg); } }
+
+        .station-base { background: #13161c; border: 15px solid #232731; border-radius: 8px; position: relative; }
+        #left-station { top: 15%; left: 15%; width: 70%; height: 70%; }
+        #breaker { position: absolute; top: 8%; right: 8%; width: 30%; height: 42%; background: #222630; border: 8px solid #0d0f13; }
+        #breaker-title { text-align: center; color: #fff; background: #0d0f13; padding: 4px; margin: 0 0 15px 0; }
+        #breaker-housing { width: 50px; height: 120px; background: #111; margin: 0 auto; position: relative; }
+        #breaker-switch { width: 44px; height: 50px; background: linear-gradient(#ff003c, #990024); position: absolute; top: 5px; left: 0; box-shadow: 0 0 15px rgba(255,0,60,0.8); }
+        
+        #wire-slot { position: absolute; bottom: 8%; right: 8%; width: 30%; height: 32%; background: #090a0d; border: 4px dashed #3a3f4d; }
+        #wire-title { text-align: center; color: var(--accent-color); margin: 5px 0 0 0; }
+        #wire-container { width: 100%; height: 60%; position: relative; overflow: hidden; }
+        .wire-red { width: 16px; height: 140%; background: linear-gradient(90deg, #ff003c, #b3002a, #ff003c); position: absolute; left: 45%; top: -20%; transform: rotate(25deg); box-shadow: 0 0 15px red; }
+        
+        #oxygen-tank { position: absolute; bottom: 5%; left: 5%; width: 45%; height: 90%; background: linear-gradient(90deg, #2c313d 0%, #434958 50%, #2c313d 100%); border: 10px solid #0d0f13; display: flex; flex-direction: column; align-items: center; justify-content: space-around; }
+        #tank-label { font-size: 2rem; color: #fff; font-weight: bold; }
+        .valve { width: 90px; height: 90px; background: radial-gradient(circle, var(--hazard-yellow) 40%, #cc9200 80%); border-radius: 50%; border: 4px solid #000; position: relative; transition: 0.6s; }
+        .pressure-gauge { width: 90px; height: 90px; background: #111; border-radius: 50%; border: 6px solid #0d0f13; position: relative; }
+        .gauge-needle { position: absolute; bottom: 50%; left: 46%; width: 5px; height: 38px; background: var(--math-blue); transform-origin: bottom; transform: rotate(-70deg); transition: 0.8s; }
+
+        #right-station { top: 20%; left: 15%; width: 70%; height: 60%; }
+        #water-injector-panel { width: 90%; height: 85%; margin: 4% auto; background: #1b1f26; border: 5px solid #0a0c0f; padding: 10px; box-sizing: border-box; }
+        #water-title-text { font-size: 2.2rem; color: var(--math-blue); text-align: center; }
+        #water { width: 80%; height: 60%; margin: 0 auto; background: #07080a; border: 8px solid #0a0c0f; display: flex; align-items: flex-end; overflow: hidden; }
+        .water-tank { width: 100%; height: 12%; background: linear-gradient(transparent, rgba(0, 240, 255, 0.4)); border-top: 4px solid var(--math-blue); transition: height 1.5s; }
+
+        #air-vent { position: absolute; top: 25%; left: 35%; width: 30%; height: 50%; background: #050507; border: 25px solid #1f232b; border-radius: 50%; overflow: hidden; }
+        .fan-blades { width: 100%; height: 100%; background: conic-gradient(from 0deg, #111318 0deg 45deg, transparent 45deg 90deg, #111318 90deg 135deg, transparent 135deg 180deg, #111318 180deg 225deg, transparent 225deg 270deg, #111318 270deg 315deg, transparent 315deg 360deg); animation: spin-fan 0.08s linear infinite; }
+        @keyframes spin-fan { 100% { transform: rotate(360deg); } }
+
+        .crack { position: absolute; background: rgba(255, 0, 60, 0.5); box-shadow: 0 0 25px rgba(255, 0, 60, 0.8); clip-path: polygon(0% 50%, 20% 40%, 45% 65%, 60% 30%, 80% 55%, 100% 50%, 85% 70%, 55% 50%, 40% 80%, 15% 55%); }
+        .spark { position: absolute; width: 5px; height: 25px; background: #fff; box-shadow: 0 0 10px #00f0ff; opacity: 0; animation: sparking 1.8s infinite; }
+        @keyframes sparking { 0%, 91% { opacity: 0; } 92% { opacity: 1; transform: scaleY(3); } 94% { opacity: 0; } 96% { opacity: 1; transform: scaleY(2); } 100% { opacity: 0; } }
+        .alien-slime { position: absolute; background: linear-gradient(180deg, rgba(140, 0, 255, 0.7), rgba(255, 0, 60, 0.2)); box-shadow: 0 0 20px rgba(140, 0, 255, 0.6); border-radius: 0 0 10px 10px; animation: slime-drip 3s infinite alternate ease-in-out; }
+        @keyframes slime-drip { 0% { transform: scaleY(1); } 100% { transform: scaleY(1.3); } }
+        .debris { position: absolute; background: linear-gradient(45deg, #2b303c, #0d0f13); border: 2px solid #3e4556; }
+        .floating-debris { animation: float-away 10s linear infinite; }
+        @keyframes float-away { 0% { transform: translate3d(0, 500px, 800px) rotate(0deg); opacity: 0; } 10% { opacity: 0.9; } 90% { opacity: 0.9; } 100% { transform: translate3d(-500px, -500px, -1800px) rotate(720deg); opacity: 0; } }
+        .scattered-book { position: absolute; width: 85px; height: 110px; background: #5a2323; border: 3px solid #0f0f14; box-shadow: 5px 8px 15px rgba(0,0,0,0.9); transform-style: preserve-3d; }
+        .scattered-book::after { content: ''; position: absolute; right: 0; width: 12px; height: 100%; background: #e0dcd3; }
+        .interactive { z-index: 10; position: absolute; cursor: pointer; transition: 0.2s; }
+        .interactive:hover { filter: drop-shadow(0 0 25px var(--math-blue)) brightness(1.3); }
+        .hazard-stripe { background: repeating-linear-gradient(-45deg, var(--hazard-yellow), var(--hazard-yellow) 10px, #000 10px, #000 20px); }
+
+        /* ---------------- HUD 계측기 ---------------- */
+        #dark-overlay { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; transition: background 0.4s ease; z-index: 50; animation: alarm-flash 1s infinite alternate; }
+        @keyframes alarm-flash { 0% { background: rgba(255, 0, 40, 0.02); } 100% { background: rgba(255, 0, 40, 0.12); } }
+        
+        #tooltip { position: absolute; display: none; background: rgba(5, 7, 10, 0.95); border: 2px solid var(--math-blue); color: var(--safe-color); padding: 18px; border-radius: 4px; pointer-events: none; z-index: 1000; box-shadow: 0 0 25px rgba(0, 240, 255, 0.4); font-size: 1.15rem; white-space: pre-wrap; transform: translate(25px, 25px); font-family: sans-serif; word-break: keep-all; }
+        .highlight { color: var(--accent-color); font-weight: bold; }
+        .object-title { color: #fff; font-size: 1.3rem; font-weight: bold; border-bottom: 1px solid #444; padding-bottom: 5px; margin-bottom: 8px; }
+
+        #hud { position: absolute; top: 30px; left: 30px; z-index: 100; pointer-events: none; background: rgba(5, 10, 15, 0.9); padding: 20px; border: 2px solid var(--math-blue); box-shadow: 0 0 20px rgba(0,240,255,0.2); width: 260px; }
+        .hud-title { color: var(--math-blue); font-size: 0.85rem; margin-bottom: 5px; letter-spacing: 1px; font-weight: bold; }
+        #probability-display { font-size: 3.2rem; color: var(--safe-color); font-weight: 900; margin: 0; text-shadow: 0 0 15px var(--safe-color); }
+        .hud-sub { font-size: 0.75rem; color: #aaa; margin-top: 5px; border-top: 1px solid #333; padding-top: 5px; }
+        
+        /* 통계 스트리밍 모니터 */
+        #stat-stream-panel {
+            position: absolute; top: 30px; right: 460px; z-index: 100;
+            width: 320px; height: 165px; background: rgba(5, 8, 12, 0.95);
+            border: 2px solid var(--hazard-yellow); padding: 12px; box-sizing: border-box;
+            color: #fff; font-size: 0.85rem; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
+            box-shadow: 0 0 20px rgba(255,183,0,0.15);
+        }
+        .stream-row { display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; margin-bottom: 3px;}
+        #stream-log-box { height: 60px; overflow: hidden; border-top: 1px solid #333; padding-top: 5px; font-size: 0.75rem; color: var(--term-green); font-family: monospace; }
+
+        /* 💡 실시간 정규근사 그래프 패널 (우측 상단 추가) */
+        #chart-panel {
+            position: absolute; top: 30px; right: 220px; z-index: 100;
+            width: 220px; height: 165px; background: rgba(4, 6, 10, 0.95);
+            border: 2px solid var(--math-blue); box-shadow: 0 0 20px rgba(0,240,255,0.2);
+            padding: 8px; box-sizing: border-box; display: flex; flex-direction: column;
+        }
+        .chart-title { font-size: 0.7rem; color: var(--math-blue); border-bottom: 1px solid #333; padding-bottom: 3px; margin-bottom: 5px; font-weight: bold; text-align: center; }
+
+        #timer-container { position: absolute; top: 30px; right: 30px; z-index: 100; background: rgba(20,0,5,0.95); padding: 15px 20px; border: 2px solid var(--accent-color); text-align: center; width: 170px; box-shadow: 0 0 20px rgba(255,0,60,0.2); }
+        .timer-label { color: #fff; font-size: 0.8rem; margin-bottom: 5px; letter-spacing: 1px; }
+        #timer-display { font-size: 3.2rem; color: var(--accent-color); text-shadow: 0 0 20px red; font-weight: bold; margin: 0; }
+
+        #story-log { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); width: 80%; max-width: 900px; height: 150px; background: rgba(5, 7, 10, 0.95); border-left: 5px solid var(--term-green); border-right: 1px solid #333; border-top: 1px solid #333; border-bottom: 1px solid #333; padding: 20px; display: flex; flex-direction: column; justify-content: flex-end; z-index: 100; color: #fff; font-size: 1.15rem; pointer-events: none; }
+        .log-entry { margin-top: 4px; animation: glitch-in 0.2s forwards; opacity: 0; text-shadow: 0 0 5px var(--term-green); font-family: sans-serif; }
+        .stat-up { color: var(--safe-color); font-weight: bold; }
+        .stat-down { color: var(--accent-color); text-shadow: 0 0 10px red; }
+
+        #restart-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; font-size: 2rem; background: #000; color: var(--accent-color); border: 2px solid var(--accent-color); cursor: pointer; z-index: 200; display: none; text-shadow: 0 0 10px red; }
+        @keyframes glitch-in { 0% { opacity: 0; transform: translateX(-10px); } 100% { opacity: 1; transform: translateX(0); } }
+    </style>
+</head>
+<body>
+
+<!-- 인트로 화면 -->
+<div id="intro-screen">
+    <div id="intro-text"></div>
+    <button id="start-game-btn" onclick="startGame()">[ SYSTEM OVERRIDE & RECOVERY ]</button>
+</div>
+
+<!-- 실시간 통계 모니터 -->
+<div id="stat-stream-panel" style="display: none;">
+    <div>
+        <div class="stream-row" style="color:var(--hazard-yellow); font-weight:bold; border-bottom:1px solid var(--hazard-yellow); padding-bottom:3px; margin-bottom:5px;">
+            <span>PROBABILITY & STATISTICS MONITOR</span><span>[CALC]</span>
+        </div>
+        <div class="stream-row">
+            <span>Total Iterations ($n$, 시행 횟수):</span><span id="total-trials" style="color:#fff;">0</span>
+        </div>
+        <div class="stream-row" style="font-size: 0.95rem; font-weight: bold;">
+            <span>Relative Freq ($\frac{x}{n}$, 상대도수):</span><span id="relative-freq-val" style="color:var(--safe-color);">0.0000</span>
+        </div>
+    </div>
+    <div id="stream-log-box"></div>
+</div>
+
+<!-- 💡 실시간 정규근사 차트 패널 HUD 기기 구조화 -->
+<div id="chart-panel" style="display: none;">
+    <div class="chart-title">NORMAL APPROXIMATION CONVERGENCE</div>
+    <div style="flex: 1; min-height: 0; width: 100%;">
+        <canvas id="normalChart"></canvas>
+    </div>
+</div>
+
+<div id="timer-container" style="display: none;">
+    <div class="timer-label">선체 격벽 파괴까지</div>
+    <div id="timer-display">30.0초</div>
+</div>
+
+<div id="tooltip"></div>
+
+<div id="viewport">
+    <div id="camera">
+        <div id="room">
+            <!-- 정면 벽 -->
+            <div class="wall front">
+                <div class="warning-icon">WARNING</div>
+                <div class="crack" style="left:12%; top:25%; width:200px; height:80px;"></div>
+                <div class="spark" style="left:15%; top:23%"></div>
+                
+                <!-- Space Window -->
+                <div id="space-window-container" class="interactive" 
+                     data-info="<div class='object-title'>Space Window Shield</div>- 외부 관측용 강철 보호 셔터입니다.&#10;- 수학적 연산 제어를 위해 외부 상황 파악이 급선무입니다.&#10;- <span class='highlight'>★순서</span>: 메인 브레이커 차단 후 안전하게 개방하십시오." 
+                     onclick="interact('window')">
+                    <div id="window-shield">
+                        <div id="window-shield-name">SPACE WINDOW</div>
+                        <div>[ SHIELD LOCKED ]</div>
+                    </div>
+                    <div id="space-view">
+                        <div id="bg-stars"></div>
+                        <div id="planet"></div>
+                        
+                        <!-- 👾 3D 레이어 입체 외계 생명체 -->
+                        <div id="monster">
+                            <div class="monster-body"></div>
+                            <div class="monster-eye eye-1"></div>
+                            <div class="monster-eye eye-2"></div>
+                            <div class="monster-jaw"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 뒷벽 -->
+            <div class="wall back">
+                <div class="crack" style="left:25%; top:15%; width:400px; height:120px; transform:rotate(-15deg);"></div>
+                <div class="alien-slime" style="right:20%; top:0; width:70px; height:300px; background: linear-gradient(180deg, rgba(255, 0, 60, 0.4), transparent);"></div>
+            </div>
+            
+            <!-- 왼쪽 벽 -->
+            <div class="wall left">
+                <div id="left-station" class="station-base">
+                    <div id="breaker" class="interactive" 
+                         data-info="<div class='object-title'>Main Power Breaker</div>- 우주선 전체의 기본 전력 그리드를 차단합니다.&#10;- 차단 시 하위 연산 알고리즘의 보정 성공률이 요동치기 시작합니다.&#10;- <span class='highlight'>★안전 순서</span>: 무조건 최우선으로 내려야 하는 장치입니다." 
+                         onclick="interact('breaker')">
+                        <div id="breaker-title">BREAKER</div>
+                        <div id="breaker-housing"><div class="breaker-switch" id="breaker-switch"></div></div>
+                    </div>
+                    
+                    <div id="wire-slot" class="interactive" 
+                         data-info="<div class='object-title'>Core Data Cable</div>- 연산 장치의 메인 데이터 버스 케이블입니다.&#10;- <span class='highlight'>⚠️위험</span>: 함부로 절단하거나 조작하면 수학적 연산 자체가 영구 불가해집니다." 
+                         onclick="interact('wire')">
+                        <div id="wire-title">CORE CABLE</div>
+                        <div id="wire-container"><div class="wire-red" id="wire-cable"></div></div>
+                    </div>
+                    
+                    <div id="oxygen-tank" class="interactive" 
+                         data-info="<div class='object-title'>Emergency Oxygen Valve</div>- 실내 생존 산소의 압력을 제어하는 수동 기계 밸브입니다.&#10;- <span class='highlight'>★안전 순서</span>: 공기 환풍기(Air Vent)의 기류 분사를 멈춘 뒤 작동해야 압력 확률 손실이 없습니다." 
+                         onclick="interact('oxygen')">
+                        <div id="tank-label">OXYGEN</div>
+                        <div class="valve-bracket"><div class="valve" id="oxy-valve"></div></div>
+                        <div class="pressure-gauge"><div class="gauge-needle" id="oxy-needle"></div></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 오른쪽 벽 -->
+            <div class="wall right">
+                <div id="right-station" class="station-base interactive" 
+                     data-info="<div class='object-title'>Coolant Injector</div>- 과열된 연산 소자를 식히기 위한 특수 냉각 수용액 탱크입니다.&#10;- <span class='highlight'>★안전 순서</span>: 쇼트 위험 방지를 위해 메인 전원(Breaker) 차단 확인 후 주입을 시도하세요." 
+                     onclick="interact('water')">
+                    <div id="water-injector-panel">
+                        <div id="water-title-text">COOLANT INJECTOR</div>
+                        <div class="hazard-stripe" style="height:10px; margin-bottom:15px; border-radius:2px;"></div>
+                        <div id="water"><div class="water-tank" id="water-tank"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 천장 -->
+            <div class="wall top">
+                <div id="air-vent" class="interactive" 
+                     data-info="<div class='object-title'>Air Vent Fan</div>- 대기 순환을 담당하는 대형 환풍기 유닛입니다.&#10;- <span class='highlight'>★안전 순서</span>: 메인 전원(Breaker)을 먼저 내려 모터 동력을 끊어야 제어가 가능합니다." 
+                     onclick="interact('vent')">
+                    <div class="fan-blades" id="vent-fan"></div>
+                </div>
+            </div>
+
+            <!-- 바닥 -->
+            <div class="wall bottom" id="floor-element"></div>
+        </div>
+    </div>
+</div>
+
+<div id="dark-overlay"></div>
+
+<div id="hud">
+    <div class="hud-title">THEORETICAL PROBABILITY (수학적 확률)</div>
+    <div id="probability-display">0.00%</div>
+    <div class="hud-sub">※ 이상적인 장치 제어 상태 기준의 이론값</div>
+</div>
+
+<div id="story-log"></div>
+
+<button id="restart-btn" onclick="location.reload()">[ REBOOT SYSTEM SYSTEM ]</button>
+
+<script>
+    // 책 및 부스러기 파편 레이아웃 자동 빌드
+    const roomEl = document.getElementById('room');
+    const floorEl = document.getElementById('floor-element');
+    for(let i=0; i<25; i++) {
+        let debris = document.createElement('div'); debris.className = 'debris floating-debris';
+        debris.style.width = Math.random() * 25 + 10 + 'px'; debris.style.height = Math.random() * 15 + 5 + 'px';
+        debris.style.left = Math.random() * 2000 - 1000 + 'px'; debris.style.top = Math.random() * 800 - 450 + 'px';
+        debris.style.animationDelay = Math.random() * 6 + 's'; roomEl.appendChild(debris);
+    }
+    for(let i=0; i<35; i++) {
+        let book = document.createElement('div'); book.className = 'scattered-book';
+        book.style.left = Math.random() * 1600 + 400 + 'px'; book.style.top = Math.random() * 1400 + 400 + 'px';
+        book.style.transform = `rotateZ(${Math.random() * 360}deg)`;
+        const colors = ['#5c1616', '#162a3f', '#132b1a', '#2e2817'];
+        book.style.background = colors[Math.floor(Math.random() * colors.length)]; floorEl.appendChild(book);
+    }
+</script>
+
+<script>
+    const introTextElement = document.getElementById('intro-text');
+    const startBtn = document.getElementById('start-game-btn');
+    const introScreen = document.getElementById('intro-screen');
+    let isGameRunning = false;
+
+    const storyLines = [
+        "딥스페이스 구역 04, 평소와 다름없이 고요하게 우주 공간을 탐색하던 중이었다.",
+        "갑자기 괴생명체의 충격이 선체를 강타했고, 메인 컴퓨터는 심각한 오류를 내뿜기 시작했다.",
+        "30초 안에 탈출해야한다. 고작 20초 뒤면 바깥의 그 끔찍한 괴물이 창문 코앞까지 도달할 것이다.",
+        "TIP 1: 선체 내의 물체들을 올바른 순서대로 작동시켜라.",
+        "TIP 2: 무작위 데이터 연산 중 [SUCCESS]가 차지하는 통계적 비율인 상대도수를 1로 수렴시켜라."
+    ];
+
+    let lineIndex = 0; let charIndex = 0;
+    function typeWriter() {
+        if (lineIndex < storyLines.length) {
+            if (charIndex === 0) introTextElement.innerHTML = introTextElement.innerHTML.replace('<span class="cursor"></span>', '') + '<br><br>> ';
+            if (charIndex < storyLines[lineIndex].length) {
+                introTextElement.innerHTML += storyLines[lineIndex].charAt(charIndex);
+                charIndex++; setTimeout(typeWriter, 15);
+            } else {
+                introTextElement.innerHTML += '<span class="cursor"></span>';
+                lineIndex++; charIndex = 0; setTimeout(typeWriter, 350);
+            }
+        } else {
+            introTextElement.innerHTML = introTextElement.innerHTML.replace('<span class="cursor"></span>', '');
+            startBtn.style.opacity = "1"; startBtn.classList.add("active");
+        }
+    }
+    window.onload = () => { setTimeout(typeWriter, 300); };
+
+    // 툴팁 노출
+    const tooltip = document.getElementById('tooltip');
+    document.querySelectorAll('.interactive').forEach(el => {
+        el.addEventListener('mouseenter', (e) => {
+            if(!isGameRunning || state.gameOver) return;
+            const info = el.getAttribute('data-info');
+            if(info) { tooltip.innerHTML = info; tooltip.style.display = 'block'; }
+        });
+        el.addEventListener('mousemove', (e) => {
+            tooltip.style.left = e.clientX + 'px'; tooltip.style.top = e.clientY + 'px';
+        });
+        el.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    });
+
+    let timeLeft = 30.0;
+    let timerInterval; let streamInterval;
+    let totalTrials = 0; let successCount = 0;
+    
+    // 💡 차트 및 버퍼 관리 변수 초기화
+    let activeChart;
+    let freqDistributionBuffer = new Array(21).fill(0); // 0.00부터 1.00까지 0.05 단위 구간 집계
+
+    function startGame() {
+        introScreen.style.opacity = "0";
+        setTimeout(() => {
+            introScreen.style.display = "none";
+            document.getElementById('timer-container').style.display = "block";
+            document.getElementById('stat-stream-panel').style.display = "flex";
+            document.getElementById('chart-panel').style.display = "flex"; // 차트 켜기
+            isGameRunning = true; 
+            initNormalChart(); // 차트 빌딩
+            updateMovement(); startTimer(); startStatStreaming();
+            addLog('통계 복구 연산 및 데이터 상대도수 모니터링 시작.', 0);
+        }, 800);
+    }
+
+    function startTimer() {
+        timerInterval = setInterval(() => {
+            if (state.gameOver) { clearInterval(timerInterval); return; }
+            timeLeft -= 0.1;
+            if(timeLeft <= 0) timeLeft = 0;
+            document.getElementById('timer-display').innerText = timeLeft.toFixed(1) + '초';
+            
+            if (timeLeft <= 10.0) {
+                document.getElementById('monster').style.display = 'block';
+                document.getElementById('room').classList.add('heavy-earthquake');
+            }
+            if (timeLeft <= 0) forceGameOver('격벽 파손. 외계 생명체가 내부로 침입했습니다.');
+        }, 100);
+    }
+
+    // 💡 1. [Chart.js 조립] 미니멀한 HUD용 실시간 연동 확률밀도/도수분포그래프 세팅
+    function initNormalChart() {
+        const chartLabels = Array.from({length: 21}, (_, i) => (i * 0.05).toFixed(2));
+        const ctx = document.getElementById('normalChart').getContext('2d');
+        
+        activeChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: chartLabels,
+                datasets: [
+                    {
+                        label: '이론 곡선',
+                        type: 'line',
+                        data: new Array(21).fill(0),
+                        borderColor: '#00f0ff',
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        fill: false
+                    },
+                    {
+                        label: '누적 빈도',
+                        data: new Array(21).fill(0),
+                        backgroundColor: 'rgba(57, 255, 20, 0.4)',
+                        borderColor: '#39ff14',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { grid: { color: 'rgba(57, 255, 20, 0.05)' }, ticks: { color: '#39ff14', font: { size: 8 } } },
+                    y: { grid: { display: false }, ticks: { display: false } }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // 💡 2. [가우스 밀도 수식함수] 이론적 근사 정규곡선 도출 함수
+    function normalPDF(x, mean, stdDev) {
+        if (stdDev === 0) return 0;
+        return (1 / (stdDev * Math.sqrt(2 * Math.PI))) * Math.exp(-Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2)));
+    }
+
+    // 대수의 법칙 시뮬레이션 및 차트 데이터 갱신
+    function startStatStreaming() {
+        const totalTrialsEl = document.getElementById('total-trials');
+        const relativeFreqEl = document.getElementById('relative-freq-val');
+        const streamLogBox = document.getElementById('stream-log-box');
+
+        streamInterval = setInterval(() => {
+            if (state.gameOver) { clearInterval(streamInterval); return; }
+
+            // 💡 고속 시각적 수렴을 위해 루프당 5회 고속 시뮬레이션 집적
+            const subCycles = 5;
+            for(let c=0; c<subCycles; c++) {
+                totalTrials++;
+                let isSuccess = (Math.random() * 100) < state.survivalRate;
+                if (isSuccess) successCount++;
+            }
+
+            let currentP = state.survivalRate / 100;
+            let currentQ = 1 - currentP;
+            let relativeFrequency = successCount / totalTrials;
+
+            // 💡 3. [히스토그램 스케일 축적 연산] 구간 버퍼에 상대도수 매핑
+            let bucketIdx = Math.round(relativeFrequency * 20);
+            if(bucketIdx >= 0 && bucketIdx <= 20) {
+                freqDistributionBuffer[bucketIdx]++;
+            }
+
+            // UI 텍스트 업데이트
+            totalTrialsEl.innerText = totalTrials;
+            relativeFreqEl.innerText = relativeFrequency.toFixed(4);
+            
+            let lastLog = (Math.random() < currentP) ? 
+                `<div style="color:var(--safe-color)">[n=${totalTrials}] 연산 결과: SUCCESS</div>` :
+                `<div style="color:var(--accent-color)">[n=${totalTrials}] 연산 결과: FAIL (ERR)</div>`;
+            
+            streamLogBox.innerHTML += lastLog;
+            if (streamLogBox.children.length > 4) streamLogBox.removeChild(streamLogBox.firstElementChild);
+            streamLogBox.scrollTop = streamLogBox.scrollHeight;
+
+            // 💡 4. [드무아브르-라플라스 이론 곡선 실시간 연계 제어]
+            let mean = totalTrials * currentP;
+            let stdDev = Math.sqrt(totalTrials * currentP * currentQ);
+            
+            let normalCurveData = [];
+            for (let i = 0; i <= 20; i++) {
+                let targetX = (i * 0.05) * totalTrials;
+                let density = normalPDF(targetX, mean, stdDev) * (totalTrials / 2.5);
+                normalCurveData.push(density);
+            }
+
+            // 차트 다이렉트 갱신
+            if(activeChart) {
+                activeChart.data.datasets[0].data = normalCurveData;
+                activeChart.data.datasets[1].data = freqDistributionBuffer;
+                activeChart.update('none'); // 연산 랙 방지를 위한 애니메이션 모드 해제 최적화
+            }
+
+        }, 40);
+    }
+
+    // 3D 카메라 뷰포트 마우스 연동 및 파라볼릭 깊이 변화 제어
+    const camera = document.getElementById('camera');
+    const room = document.getElementById('room');
+    const bgStars = document.getElementById('bg-stars');
+    const planet = document.getElementById('planet');
+    
+    document.addEventListener('mousemove', (e) => {
+        if (!isGameRunning || state.gameOver) return;
+        const xRatio = (e.clientX / window.innerWidth) - 0.5; 
+        const yRatio = (e.clientY / window.innerHeight) - 0.5;
+        
+        camera.style.transform = `rotateX(${-yRatio * 80}deg) rotateY(${xRatio * 320}deg)`;
+        bgStars.style.transform = `translate3d(${xRatio * 60}px, ${yRatio * 60}px, -300px) scale(1.6)`;
+        planet.style.transform = `translate3d(${xRatio * 140}px, ${yRatio * 140}px, -150px) scale(1.3)`;
+    });
+
+    // 이동키 입력 구조
+    let roomX = 0; let roomZ = 400; let speed = 25; const keys = {};
+    document.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
+    document.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+    function updateMovement() {
+        if (!isGameRunning || state.gameOver) return;
+        const transformStr = camera.style.transform;
+        let yaw = 0;
+        if(transformStr.includes('rotateY')) yaw = parseFloat(transformStr.split('rotateY(')[1].split('deg)')[0]);
+        let yawRad = yaw * Math.PI / 180; let dx = 0, dz = 0;
+        if (keys['w'] || keys['arrowup']) { dx -= Math.sin(yawRad) * speed; dz += Math.cos(yawRad) * speed; }
+        if (keys['s'] || keys['arrowdown']) { dx += Math.sin(yawRad) * speed; dz -= Math.cos(yawRad) * speed; }
+        roomX = Math.max(-400, Math.min(400, roomX + dx)); roomZ = Math.max(-400, Math.min(400, roomZ + dz));
+        room.style.setProperty('--rx', `${roomX}px`); room.style.setProperty('--rz', `${roomZ}px`);
+        requestAnimationFrame(updateMovement);
+    }
+
+    // 상태 변수
+    let state = { survivalRate: 0.00, breakerOff: false, ventCleared: false, windowOpen: false, waterPoured: false, oxygenOn: false, gameOver: false };
+    const probDisplay = document.getElementById('probability-display');
+    const logContainer = document.getElementById('story-log');
+
+    function updateProbability(change) {
+        if (state.gameOver) return;
+        state.survivalRate = Math.max(0, Math.min(100, state.survivalRate + change));
+        probDisplay.innerText = state.survivalRate.toFixed(2) + '%';
+        if (state.survivalRate >= 100) winGame();
+    }
+
+    function addLog(actionText, changeValue = 0) {
+        const entry = document.createElement('div'); entry.className = `log-entry`;
+        let statText = changeValue > 0 ? ` <span class="stat-up">=> 수학적 오차율 감소 (+${changeValue.toFixed(2)}%)</span>` : (changeValue < 0 ? ` <span class="stat-down">=> 연산 간섭 노이즈 발생 (${changeValue.toFixed(2)}%)</span>` : "");
+        entry.innerHTML = `> ${actionText}${statText}`; logContainer.appendChild(entry);
+        if (logContainer.children.length > 5) logContainer.removeChild(logContainer.firstElementChild);
+    }
+
+    function interact(item) {
+        if (!isGameRunning || state.gameOver) return;
+        tooltip.style.display = 'none';
+
+        if (item === 'breaker' && !state.breakerOff) {
+            state.breakerOff = true;
+            document.getElementById('breaker-switch').style.top = '65px'; 
+            document.getElementById('breaker-switch').style.background = '#222';
+            document.getElementById('dark-overlay').style.background = 'rgba(0, 0, 0, 0.82)'; 
+            addLog('메인 전력 그리드 해제. 수학적 확률 기저치 확보.', 30.00); updateProbability(30.00);
+        } else if (item === 'vent' && !state.ventCleared) {
+            state.ventCleared = true; document.getElementById('vent-fan').style.animationPlayState = 'paused';
+            if (state.breakerOff) { addLog('환풍구 동력 정지. 기류 마찰 노이즈 제거.', 15.00); updateProbability(15.00); } 
+            else { addLog('전기 쇼트 발생! 연산 장치 역서지 현상 발생.', -10.00); updateProbability(-10.00); }
+        } else if (item === 'oxygen' && !state.oxygenOn) {
+            state.oxygenOn = true; document.getElementById('oxy-valve').style.transform = 'rotate(180deg)'; document.getElementById('oxy-needle').style.transform = 'rotate(30deg)';
+            if (state.ventCleared) { addLog('비상 산소 밸브 개방. 대기 밀도 확률 고정.', 18.50); updateProbability(18.50); } 
+            else { addLog('대기 급배출 불균형으로 산소량 급감.', -15.00); updateProbability(-15.00); }
+        } else if (item === 'window' && !state.windowOpen) {
+            state.windowOpen = true; document.getElementById('window-shield').classList.add('opened');
+            if (state.breakerOff) { addLog('관측 셔터 개방. 시각 데이터 보정값 융합.', 25.00); updateProbability(25.00); } 
+            else { addLog('방사선 노이즈 침투로 논리 회로 오염.', -10.00); updateProbability(-10.00); }
+        } else if (item === 'water' && !state.waterPoured) {
+            state.waterPoured = true; document.getElementById('water-tank').style.height = '65%'; 
+            if (state.breakerOff) { addLog('냉각제 분사 완료. 코어 온도 강하 및 계수 수렴 완료.', 11.50); updateProbability(11.50); } 
+            else { addLog('액체 계통 누전으로 인한 전면 연산 패널티.', -20.00); updateProbability(-20.00); }
+        } else if (item === 'wire') {
+            document.getElementById('wire-cable').style.opacity = '0'; 
+            forceGameOver('메인 버스 케이블 손상. 시스템 불능.');
+        }
+    }
+
+    function forceGameOver(msg) {
+        state.gameOver = true;
+        document.getElementById('room').classList.remove('heavy-earthquake');
+        document.getElementById('dark-overlay').style.background = 'rgba(255, 0, 40, 0.85)';
+        addLog(`<span style="color:#000; background:#f00; padding:2px 5px; font-weight:bold;">FATAL EXCEPTION: ${msg}</span>`, 0); 
+        setTimeout(() => { document.getElementById('restart-btn').style.display = 'block'; }, 800);
+    }
+
+    function winGame() {
+        state.gameOver = true;
+        successCount = totalTrials; 
+        document.getElementById('room').classList.remove('heavy-earthquake');
+        document.getElementById('relative-freq-val').innerText = "1.0000";
+        document.getElementById('probability-display').innerText = '100.00%';
+        document.getElementById('dark-overlay').style.background = 'rgba(0, 255, 200, 0.25)';
+        
+        // 승리 시 차트 막대를 전부 오른쪽 끝(1.00)으로 완전히 밀어붙임
+        if(activeChart) {
+            let finalDist = new Array(21).fill(0);
+            finalDist[20] = totalTrials;
+            activeChart.data.datasets[1].data = finalDist;
+            activeChart.update();
+        }
+
+        addLog('<span class="stat-up">통계적 상대도수 1.0000 완전 수렴. 탈출 시퀀스 가동 성공!</span>', 0);
+        setTimeout(() => { document.getElementById('restart-btn').style.display = 'block'; }, 1200);
+    }
+</script>
+</body>
+</html>
